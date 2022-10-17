@@ -16,6 +16,7 @@ setClass("speciesLISA",
 setClass("VIF",
          representation(variables="character",
                         excluded="character",
+                        excludedPairs="list",
                         corMatrix="matrix",
                         results="data.frame")
 )

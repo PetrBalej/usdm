@@ -1,4 +1,4 @@
-Package: usdm
+Package: usdmPB
 Type: Package
 Title: Uncertainty Analysis for Species Distribution Models
 Version: 1.1-19
