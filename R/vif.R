@@ -133,6 +133,7 @@ setMethod('vifcor', signature(x='data.frame'),
             n <- new("VIF")
             n@variables <- colnames(x)
             exc <- c()
+            excPairs <- list()
             while (LOOP) {
               xcor <- abs(cor(x, method=method))
               mx <- .maxCor(xcor)
@@ -142,10 +143,17 @@ setMethod('vifcor', signature(x='data.frame'),
                 v <- .vif2(x,c(w1,w2))
                 ex <- mx[which.max(v[mx])]
                 exc <- c(exc,ex)
+                follower <- ifelse(mx[1] == ex, mx[2], mx[1]) # select follower
+                ifelse(follower %in% names(excPairs), excPairs[[follower]] <- c(excPairs[[follower]], ex), excPairs[[follower]] <- c(ex)) # add ex to follower
+                if(ex %in% names(excPairs)){ # remove ex follovew
+                  excPairs[[follower]] <- c(excPairs[[follower]], excPairs[[ex]])
+                  excPairs[ex] <- NULL
+                }
                 x <- x[,-which(colnames(x) == ex)]
               } else LOOP <- FALSE
             }
             if (length(exc) > 0) n@excluded <- exc
+            if (length(excPairs) > 0) n@excludedPairs <- excPairs
             v <- .vif(x)
             n@corMatrix <- cor(x, method=method)
             n@results <- data.frame(Variables=names(v),VIF=as.vector(v))
