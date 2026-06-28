@@ -57,7 +57,11 @@ addtional arguments:
 }
 
 \value{
- an object of class \code{VIF}
+ an object of class \code{VIF} with the following additional slots populated by \code{vifcor} and \code{vifstep}:
+
+ \code{exclusionLog}: a \code{data.frame} with one row per exclusion step containing columns \code{step}, \code{excluded}, \code{correlated_with}, \code{correlation}, \code{vif_excluded}, and \code{vif_retained} (\code{NA} for \code{vifstep}). For \code{vifcor} the \code{correlated_with} column is the direct pair partner; for \code{vifstep} it is the remaining variable with the highest absolute correlation to the excluded one.
+
+ \code{chains}: a named \code{list} where each element represents a final retained variable and its value is a character vector of all excluded predictors transitively attributed to it, in order from most recently to most distally excluded. Use this to trace e.g. \code{Bio7 <- Bio10 <- Bio5}.
 }
 
 \references{Chatterjee, S. and Hadi, A. S. 2006. Regression analysis by example. John Wiley and Sons.;

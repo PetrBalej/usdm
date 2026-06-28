@@ -19,6 +19,17 @@ setMethod ('show' , 'VIF',
              cat ('\n')
              cat('---------- VIFs of the remained variables --------','\n')
              print(object@results)
+             if (nrow(object@exclusionLog) > 0) {
+               cat('\n---------- Exclusion log --------\n')
+               print(object@exclusionLog, row.names = FALSE)
+               ch <- object@chains
+               if (length(ch) > 0) {
+                 cat('\n---------- Exclusion chains (final variable <- removed predictors) --------\n')
+                 for (nm in names(ch)) {
+                   cat(nm, '<-', paste(ch[[nm]], collapse = ' <- '), '\n')
+                 }
+               }
+             }
            }
            )
 

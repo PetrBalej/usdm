@@ -18,7 +18,9 @@ setClass("VIF",
          representation(variables="character",
                         excluded="character",
                         corMatrix="matrix",
-                        results="data.frame")
+                        results="data.frame",
+                        exclusionLog="data.frame",
+                        chains="list")
 )
 
 setClass("RasterVariogram",

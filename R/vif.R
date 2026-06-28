@@ -70,6 +70,32 @@
   w <- which.min(co)
   c(rr[w],cc[w])
 }
+#-----------
+# Builds the transitive exclusion chains from an exclusionLog data.frame.
+# Returns a named list: each name is a final retained variable; the value is a
+# character vector of excluded predictors attributed to it, ordered from the
+# most recently excluded (direct pairing partner) to the most distally excluded.
+# Example: list(Bio7 = c("Bio10", "Bio5")) means Bio7 beat Bio10 which had
+# previously beaten Bio5, so the chain reads Bio7 <- Bio10 <- Bio5.
+.buildChains <- function(log) {
+  if (is.null(log) || nrow(log) == 0L) return(list())
+  accumulated <- list()
+  for (i in seq_len(nrow(log))) {
+    ex <- log$excluded[i]
+    kp <- log$correlated_with[i]
+    # Collect the chain of ex: ex itself plus anything ex had previously won
+    ex_chain <- if (!is.null(accumulated[[ex]])) c(ex, accumulated[[ex]]) else ex
+    # ex is now truly removed; clear its accumulated record
+    accumulated[[ex]] <- NULL
+    # Transfer ex_chain to the winner (kp)
+    if (is.null(accumulated[[kp]])) {
+      accumulated[[kp]] <- ex_chain
+    } else {
+      accumulated[[kp]] <- c(accumulated[[kp]], ex_chain)
+    }
+  }
+  accumulated
+}
 #-----------------
 if (!isGeneric("vif")) {
   setGeneric("vif", function(x,size, ...)
@@ -195,15 +221,24 @@ setMethod('vifcor', signature(x='RasterStackBrick'),
             n <- new("VIF")
             n@variables <- colnames(x)
             exc <- c()
+            excLog <- data.frame(step=integer(), excluded=character(), correlated_with=character(),
+                                 correlation=numeric(), vif_excluded=numeric(), vif_retained=numeric(),
+                                 stringsAsFactors=FALSE)
+            step_i <- 0L
             if (is.null(keep)) {
               while (LOOP) {
                 xcor <- abs(cor(x, method=method))
                 mx <- .maxCor(xcor)
                 if (xcor[mx[1],mx[2]] >= th) {
+                  step_i <- step_i + 1L
                   w1 <- which(colnames(xcor) == mx[1])
                   w2 <- which(rownames(xcor) == mx[2])
                   v <- .vif2(x,c(w1,w2))
                   ex <- mx[which.max(v[mx])]
+                  kp <- mx[mx != ex]
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor[mx[1],mx[2]], vif_excluded=v[ex], vif_retained=v[kp],
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP <- FALSE
@@ -218,13 +253,25 @@ setMethod('vifcor', signature(x='RasterStackBrick'),
                   mx <- mx[[1]]
                 }
                 if (xcor[mx[1],mx[2]] >= th) {
+                  step_i <- step_i + 1L
                   w1 <- which(colnames(xcor) == mx[1])
                   w2 <- which(rownames(xcor) == mx[2])
                   if (any(mx %in% keep)) {
                     ex <- mx[!mx %in% keep]
+                    if (length(ex) == 1L) {
+                      kp <- mx[mx != ex]
+                      v_pair <- .vif2(x, c(w1, w2))
+                      excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                       correlation=xcor[mx[1],mx[2]], vif_excluded=v_pair[ex], vif_retained=v_pair[kp],
+                                       stringsAsFactors=FALSE))
+                    }
                   } else {
                     v <- .vif2(x,c(w1,w2))
                     ex <- mx[which.max(v[mx])]
+                    kp <- mx[mx != ex]
+                    excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                     correlation=xcor[mx[1],mx[2]], vif_excluded=v[ex], vif_retained=v[kp],
+                                     stringsAsFactors=FALSE))
                   }
                   
                   exc <- c(exc,ex)
@@ -239,6 +286,8 @@ setMethod('vifcor', signature(x='RasterStackBrick'),
             }
             #---
             if (length(exc) > 0) n@excluded <- exc
+            n@exclusionLog <- excLog
+            n@chains <- .buildChains(excLog)
             v <- .vif(x)
             n@corMatrix <- cor(x, method=method)
             n@results <- data.frame(Variables=names(v),VIF=as.vector(v))
@@ -292,15 +341,24 @@ setMethod('vifcor', signature(x='SpatRaster'),
             n <- new("VIF")
             n@variables <- colnames(x)
             exc <- c()
+            excLog <- data.frame(step=integer(), excluded=character(), correlated_with=character(),
+                                 correlation=numeric(), vif_excluded=numeric(), vif_retained=numeric(),
+                                 stringsAsFactors=FALSE)
+            step_i <- 0L
             if (is.null(keep)) {
               while (LOOP) {
                 xcor <- abs(cor(x, method=method))
                 mx <- .maxCor(xcor)
                 if (xcor[mx[1],mx[2]] >= th) {
+                  step_i <- step_i + 1L
                   w1 <- which(colnames(xcor) == mx[1])
                   w2 <- which(rownames(xcor) == mx[2])
                   v <- .vif2(x,c(w1,w2))
                   ex <- mx[which.max(v[mx])]
+                  kp <- mx[mx != ex]
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor[mx[1],mx[2]], vif_excluded=v[ex], vif_retained=v[kp],
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP <- FALSE
@@ -315,13 +373,25 @@ setMethod('vifcor', signature(x='SpatRaster'),
                   mx <- mx[[1]]
                 }
                 if (xcor[mx[1],mx[2]] >= th) {
+                  step_i <- step_i + 1L
                   w1 <- which(colnames(xcor) == mx[1])
                   w2 <- which(rownames(xcor) == mx[2])
                   if (any(mx %in% keep)) {
                     ex <- mx[!mx %in% keep]
+                    if (length(ex) == 1L) {
+                      kp <- mx[mx != ex]
+                      v_pair <- .vif2(x, c(w1, w2))
+                      excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                       correlation=xcor[mx[1],mx[2]], vif_excluded=v_pair[ex], vif_retained=v_pair[kp],
+                                       stringsAsFactors=FALSE))
+                    }
                   } else {
                     v <- .vif2(x,c(w1,w2))
                     ex <- mx[which.max(v[mx])]
+                    kp <- mx[mx != ex]
+                    excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                     correlation=xcor[mx[1],mx[2]], vif_excluded=v[ex], vif_retained=v[kp],
+                                     stringsAsFactors=FALSE))
                   }
                   
                   exc <- c(exc,ex)
@@ -336,6 +406,8 @@ setMethod('vifcor', signature(x='SpatRaster'),
             }
             #---
             if (length(exc) > 0) n@excluded <- exc
+            n@exclusionLog <- excLog
+            n@chains <- .buildChains(excLog)
             v <- .vif(x)
             n@corMatrix <- cor(x, method=method)
             n@results <- data.frame(Variables=names(v),VIF=as.vector(v))
@@ -389,15 +461,24 @@ setMethod('vifcor', signature(x='data.frame'),
             n <- new("VIF")
             n@variables <- colnames(x)
             exc <- c()
+            excLog <- data.frame(step=integer(), excluded=character(), correlated_with=character(),
+                                 correlation=numeric(), vif_excluded=numeric(), vif_retained=numeric(),
+                                 stringsAsFactors=FALSE)
+            step_i <- 0L
             if (is.null(keep)) {
               while (LOOP) {
                 xcor <- abs(cor(x, method=method))
                 mx <- .maxCor(xcor)
                 if (xcor[mx[1],mx[2]] >= th) {
+                  step_i <- step_i + 1L
                   w1 <- which(colnames(xcor) == mx[1])
                   w2 <- which(rownames(xcor) == mx[2])
                   v <- .vif2(x,c(w1,w2))
                   ex <- mx[which.max(v[mx])]
+                  kp <- mx[mx != ex]
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor[mx[1],mx[2]], vif_excluded=v[ex], vif_retained=v[kp],
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP <- FALSE
@@ -412,13 +493,25 @@ setMethod('vifcor', signature(x='data.frame'),
                   mx <- mx[[1]]
                 }
                 if (xcor[mx[1],mx[2]] >= th) {
+                  step_i <- step_i + 1L
                   w1 <- which(colnames(xcor) == mx[1])
                   w2 <- which(rownames(xcor) == mx[2])
                   if (any(mx %in% keep)) {
                     ex <- mx[!mx %in% keep]
+                    if (length(ex) == 1L) {
+                      kp <- mx[mx != ex]
+                      v_pair <- .vif2(x, c(w1, w2))
+                      excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                       correlation=xcor[mx[1],mx[2]], vif_excluded=v_pair[ex], vif_retained=v_pair[kp],
+                                       stringsAsFactors=FALSE))
+                    }
                   } else {
                     v <- .vif2(x,c(w1,w2))
                     ex <- mx[which.max(v[mx])]
+                    kp <- mx[mx != ex]
+                    excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                     correlation=xcor[mx[1],mx[2]], vif_excluded=v[ex], vif_retained=v[kp],
+                                     stringsAsFactors=FALSE))
                   }
                   
                   exc <- c(exc,ex)
@@ -433,6 +526,8 @@ setMethod('vifcor', signature(x='data.frame'),
             }
             #---
             if (length(exc) > 0) n@excluded <- exc
+            n@exclusionLog <- excLog
+            n@chains <- .buildChains(excLog)
             v <- .vif(x)
             n@corMatrix <- cor(x, method=method)
             n@results <- data.frame(Variables=names(v),VIF=as.vector(v))
@@ -488,15 +583,24 @@ setMethod('vifcor', signature(x='matrix'),
             n <- new("VIF")
             n@variables <- colnames(x)
             exc <- c()
+            excLog <- data.frame(step=integer(), excluded=character(), correlated_with=character(),
+                                 correlation=numeric(), vif_excluded=numeric(), vif_retained=numeric(),
+                                 stringsAsFactors=FALSE)
+            step_i <- 0L
             if (is.null(keep)) {
               while (LOOP) {
                 xcor <- abs(cor(x, method=method))
                 mx <- .maxCor(xcor)
                 if (xcor[mx[1],mx[2]] >= th) {
+                  step_i <- step_i + 1L
                   w1 <- which(colnames(xcor) == mx[1])
                   w2 <- which(rownames(xcor) == mx[2])
                   v <- .vif2(x,c(w1,w2))
                   ex <- mx[which.max(v[mx])]
+                  kp <- mx[mx != ex]
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor[mx[1],mx[2]], vif_excluded=v[ex], vif_retained=v[kp],
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP <- FALSE
@@ -511,13 +615,25 @@ setMethod('vifcor', signature(x='matrix'),
                   mx <- mx[[1]]
                 }
                 if (xcor[mx[1],mx[2]] >= th) {
+                  step_i <- step_i + 1L
                   w1 <- which(colnames(xcor) == mx[1])
                   w2 <- which(rownames(xcor) == mx[2])
                   if (any(mx %in% keep)) {
                     ex <- mx[!mx %in% keep]
+                    if (length(ex) == 1L) {
+                      kp <- mx[mx != ex]
+                      v_pair <- .vif2(x, c(w1, w2))
+                      excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                       correlation=xcor[mx[1],mx[2]], vif_excluded=v_pair[ex], vif_retained=v_pair[kp],
+                                       stringsAsFactors=FALSE))
+                    }
                   } else {
                     v <- .vif2(x,c(w1,w2))
                     ex <- mx[which.max(v[mx])]
+                    kp <- mx[mx != ex]
+                    excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                     correlation=xcor[mx[1],mx[2]], vif_excluded=v[ex], vif_retained=v[kp],
+                                     stringsAsFactors=FALSE))
                   }
                   
                   exc <- c(exc,ex)
@@ -532,6 +648,8 @@ setMethod('vifcor', signature(x='matrix'),
             }
             #---
             if (length(exc) > 0) n@excluded <- exc
+            n@exclusionLog <- excLog
+            n@chains <- .buildChains(excLog)
             v <- .vif(x)
             n@corMatrix <- cor(x, method=method)
             n@results <- data.frame(Variables=names(v),VIF=as.vector(v))
@@ -588,11 +706,22 @@ setMethod('vifstep', signature(x='RasterStackBrick'),
             n <- new("VIF")
             n@variables <- colnames(x)
             exc <- c()
+            excLog <- data.frame(step=integer(), excluded=character(), correlated_with=character(),
+                                 correlation=numeric(), vif_excluded=numeric(), vif_retained=numeric(),
+                                 stringsAsFactors=FALSE)
+            step_i <- 0L
             if (is.null(keep)) {
               while (LOOP) {
                 v <- .vif(x)
                 if (v[which.max(v)] >= th) {
+                  step_i <- step_i + 1L
                   ex <- names(v[which.max(v)])
+                  xcor_step <- abs(cor(x, method=method))
+                  diag(xcor_step) <- NA
+                  kp <- names(which.max(xcor_step[ex, ]))
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor_step[ex, kp], vif_excluded=v[ex], vif_retained=NA_real_,
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP=FALSE
@@ -602,7 +731,14 @@ setMethod('vifstep', signature(x='RasterStackBrick'),
                 v <- .vif(x)
                 v <- v[!names(v) %in% keep]
                 if (v[which.max(v)] >= th) {
+                  step_i <- step_i + 1L
                   ex <- names(v[which.max(v)])
+                  xcor_step <- abs(cor(x, method=method))
+                  diag(xcor_step) <- NA
+                  kp <- names(which.max(xcor_step[ex, ]))
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor_step[ex, kp], vif_excluded=v[ex], vif_retained=NA_real_,
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP=FALSE
@@ -610,6 +746,8 @@ setMethod('vifstep', signature(x='RasterStackBrick'),
             }
             #---
             if (length(exc) > 0) n@excluded <- exc
+            n@exclusionLog <- excLog
+            n@chains <- .buildChains(excLog)
             v <- .vif(x)
             n@corMatrix <- cor(x, method=method)
             n@results <- data.frame(Variables=names(v),VIF=as.vector(v))
@@ -661,11 +799,22 @@ setMethod('vifstep', signature(x='data.frame'),
             n <- new("VIF")
             n@variables <- colnames(x)
             exc <- c()
+            excLog <- data.frame(step=integer(), excluded=character(), correlated_with=character(),
+                                 correlation=numeric(), vif_excluded=numeric(), vif_retained=numeric(),
+                                 stringsAsFactors=FALSE)
+            step_i <- 0L
             if (is.null(keep)) {
               while (LOOP) {
                 v <- .vif(x)
                 if (v[which.max(v)] >= th) {
+                  step_i <- step_i + 1L
                   ex <- names(v[which.max(v)])
+                  xcor_step <- abs(cor(x, method=method))
+                  diag(xcor_step) <- NA
+                  kp <- names(which.max(xcor_step[ex, ]))
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor_step[ex, kp], vif_excluded=v[ex], vif_retained=NA_real_,
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP=FALSE
@@ -675,13 +824,22 @@ setMethod('vifstep', signature(x='data.frame'),
                 v <- .vif(x)
                 v <- v[!names(v) %in% keep]
                 if (v[which.max(v)] >= th) {
+                  step_i <- step_i + 1L
                   ex <- names(v[which.max(v)])
+                  xcor_step <- abs(cor(x, method=method))
+                  diag(xcor_step) <- NA
+                  kp <- names(which.max(xcor_step[ex, ]))
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor_step[ex, kp], vif_excluded=v[ex], vif_retained=NA_real_,
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP=FALSE
               }
             }
             if (length(exc) > 0) n@excluded <- exc
+            n@exclusionLog <- excLog
+            n@chains <- .buildChains(excLog)
             v <- .vif(x)
             n@corMatrix <- cor(x, method=method)
             n@results <- data.frame(Variables=names(v),VIF=as.vector(v))
@@ -735,11 +893,22 @@ setMethod('vifstep', signature(x='matrix'),
             n <- new("VIF")
             n@variables <- colnames(x)
             exc <- c()
+            excLog <- data.frame(step=integer(), excluded=character(), correlated_with=character(),
+                                 correlation=numeric(), vif_excluded=numeric(), vif_retained=numeric(),
+                                 stringsAsFactors=FALSE)
+            step_i <- 0L
             if (is.null(keep)) {
               while (LOOP) {
                 v <- .vif(x)
                 if (v[which.max(v)] >= th) {
+                  step_i <- step_i + 1L
                   ex <- names(v[which.max(v)])
+                  xcor_step <- abs(cor(x, method=method))
+                  diag(xcor_step) <- NA
+                  kp <- names(which.max(xcor_step[ex, ]))
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor_step[ex, kp], vif_excluded=v[ex], vif_retained=NA_real_,
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP=FALSE
@@ -749,13 +918,22 @@ setMethod('vifstep', signature(x='matrix'),
                 v <- .vif(x)
                 v <- v[!names(v) %in% keep]
                 if (v[which.max(v)] >= th) {
+                  step_i <- step_i + 1L
                   ex <- names(v[which.max(v)])
+                  xcor_step <- abs(cor(x, method=method))
+                  diag(xcor_step) <- NA
+                  kp <- names(which.max(xcor_step[ex, ]))
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor_step[ex, kp], vif_excluded=v[ex], vif_retained=NA_real_,
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP=FALSE
               }
             }
             if (length(exc) > 0) n@excluded <- exc
+            n@exclusionLog <- excLog
+            n@chains <- .buildChains(excLog)
             v <- .vif(x)
             n@corMatrix <- cor(x, method=method)
             n@results <- data.frame(Variables=names(v),VIF=as.vector(v))
@@ -807,11 +985,22 @@ setMethod('vifstep', signature(x='SpatRaster'),
             n <- new("VIF")
             n@variables <- colnames(x)
             exc <- c()
+            excLog <- data.frame(step=integer(), excluded=character(), correlated_with=character(),
+                                 correlation=numeric(), vif_excluded=numeric(), vif_retained=numeric(),
+                                 stringsAsFactors=FALSE)
+            step_i <- 0L
             if (is.null(keep)) {
               while (LOOP) {
                 v <- .vif(x)
                 if (v[which.max(v)] >= th) {
+                  step_i <- step_i + 1L
                   ex <- names(v[which.max(v)])
+                  xcor_step <- abs(cor(x, method=method))
+                  diag(xcor_step) <- NA
+                  kp <- names(which.max(xcor_step[ex, ]))
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor_step[ex, kp], vif_excluded=v[ex], vif_retained=NA_real_,
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP=FALSE
@@ -821,7 +1010,14 @@ setMethod('vifstep', signature(x='SpatRaster'),
                 v <- .vif(x)
                 v <- v[!names(v) %in% keep]
                 if (v[which.max(v)] >= th) {
+                  step_i <- step_i + 1L
                   ex <- names(v[which.max(v)])
+                  xcor_step <- abs(cor(x, method=method))
+                  diag(xcor_step) <- NA
+                  kp <- names(which.max(xcor_step[ex, ]))
+                  excLog <- rbind(excLog, data.frame(step=step_i, excluded=ex, correlated_with=kp,
+                                   correlation=xcor_step[ex, kp], vif_excluded=v[ex], vif_retained=NA_real_,
+                                   stringsAsFactors=FALSE))
                   exc <- c(exc,ex)
                   x <- x[,-which(colnames(x) == ex)]
                 } else LOOP=FALSE
@@ -829,6 +1025,8 @@ setMethod('vifstep', signature(x='SpatRaster'),
             }
             
             if (length(exc) > 0) n@excluded <- exc
+            n@exclusionLog <- excLog
+            n@chains <- .buildChains(excLog)
             v <- .vif(x)
             n@corMatrix <- cor(x, method=method)
             n@results <- data.frame(Variables=names(v),VIF=as.vector(v))
